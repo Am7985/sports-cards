@@ -25,7 +25,7 @@ def list_cards(
     q: Optional[str] = Query(None),
     page: int = 1,
     page_size: int = 50,
-    sort: str = "updated_at",   # allow: updated_at, created_at, year, player, brand
+    sort: str = "updated_at",   # allow: updated_at, created_at, year, player, brand, set_name, card_no
     order: str = "desc",        # asc|desc
 ):
     page = max(1, page); page_size = min(max(1, page_size), 200)
@@ -38,7 +38,6 @@ def list_cards(
             (Card.set_name.ilike(like)) | (Card.card_no.ilike(like))
         )
 
-    # safe sort
     col = getattr(Card, sort, Card.updated_at)
     query = query.order_by(col.desc() if order.lower() == "desc" else col.asc())
 
