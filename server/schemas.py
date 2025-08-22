@@ -1,6 +1,7 @@
 # server/schemas.py
 from pydantic import BaseModel
 from typing import Optional
+from typing import Optional
 
 class CardBase(BaseModel):
     year: Optional[int] = None
@@ -30,3 +31,26 @@ class CardOut(CardBase):
 
     class Config:
         from_attributes = True
+
+class OwnershipBase(BaseModel):
+    card_uuid: str
+    condition_type: Optional[str] = None   # RAW | GRADED
+    grade_scale: Optional[str] = None      # RAW | PSA | BGS | SGC
+    grade_value: Optional[str] = None
+    cert_no: Optional[str] = None
+    acquired_date: Optional[str] = None    # ISO8601 yyyy-mm-dd ok
+    price_paid: Optional[float] = None
+    currency: Optional[str] = "USD"
+    source: Optional[str] = None
+    location: Optional[str] = None
+    quantity: int = 1
+    status: Optional[str] = "OWNED"
+    notes: Optional[str] = None
+
+class OwnershipCreate(OwnershipBase): pass
+
+class OwnershipOut(OwnershipBase):
+    ownership_uuid: str
+    created_at: str
+    updated_at: str
+    class Config: from_attributes = True
