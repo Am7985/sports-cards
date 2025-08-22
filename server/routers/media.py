@@ -4,6 +4,7 @@ from uuid import uuid4
 from datetime import datetime
 import os, hashlib
 from PIL import Image
+from typing import Optional   # <-- added
 
 from ..deps import get_db
 from ..models import Media, Card, Ownership
