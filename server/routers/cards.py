@@ -22,20 +22,27 @@ def canon(year, brand, set_name, subset, card_no, parallel, variant) -> str:
 @router.get("", response_model=List[CardOut])
 def list_cards(
     db: Session = Depends(get_db),
-    q: Optional[str] = Query(None, description="search player/brand/set"),
-    limit: int = 100,
-    offset: int = 0,
+    q: Optional[str] = Query(None),
+    page: int = 1,
+    page_size: int = 50,
+    sort: str = "updated_at",   # allow: updated_at, created_at, year, player, brand
+    order: str = "desc",        # asc|desc
 ):
+    page = max(1, page); page_size = min(max(1, page_size), 200)
+
     query = db.query(Card).filter(Card.deleted_at.is_(None))
     if q:
         like = f"%{q.lower()}%"
         query = query.filter(
-            (Card.player.ilike(like)) |
-            (Card.brand.ilike(like))  |
-            (Card.set_name.ilike(like)) |
-            (Card.card_no.ilike(like))
+            (Card.player.ilike(like)) | (Card.brand.ilike(like)) |
+            (Card.set_name.ilike(like)) | (Card.card_no.ilike(like))
         )
-    return query.order_by(Card.updated_at.desc()).offset(offset).limit(limit).all()
+
+    # safe sort
+    col = getattr(Card, sort, Card.updated_at)
+    query = query.order_by(col.desc() if order.lower() == "desc" else col.asc())
+
+    return query.offset((page - 1) * page_size).limit(page_size).all()
 
 @router.get("/{card_uuid}", response_model=CardOut)
 def get_card(card_uuid: str, db: Session = Depends(get_db)):

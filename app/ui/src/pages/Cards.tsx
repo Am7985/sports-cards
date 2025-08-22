@@ -58,6 +58,27 @@ export default function CardsPage() {
     setThumbs((t) => ({ ...t, [card_uuid]: full }));
   }
 
+  async function load() {
+  const { data } = await api.get<Card[]>("/v1/cards", { params: q ? { q } : {} });
+  setCards(data);
+
+  const pairs = await Promise.all(
+    data.map(async (c) => {
+      try {
+        const r = await api.get<{ url: string | null; thumb_url: string | null }>("/v1/media/latest", {
+          params: { card_uuid: c.card_uuid },
+        });
+        const full = (u: string | null) => (u ? `${import.meta.env.VITE_API_BASE_URL}${u}` : "");
+        return [c.card_uuid, full(r.data.thumb_url)] as const;
+      } catch {
+        return [c.card_uuid, ""] as const;
+      }
+    })
+  );
+  setThumbs(Object.fromEntries(pairs));
+}
+
+
   return (
     <div className="p-6 space-y-6">
       <h1 className="text-2xl font-bold">Cards</h1>
@@ -75,6 +96,28 @@ export default function CardsPage() {
           target="_blank"
           rel="noreferrer"
         >
+          <label className="inline-block bg-gray-700 text-white rounded px-3 py-2 cursor-pointer">
+            Import CSV
+            <input
+              type="file"
+              accept=".csv"
+              className="hidden"
+              onChange={async (e) => {
+                const input = e.currentTarget;
+                const f = input.files?.[0];
+                if (!f) return;
+                const fd = new FormData();
+                fd.append("file", f);
+                try {
+                  const r = await api.post("/v1/import/cards.csv", fd, { headers: { "Content-Type": "multipart/form-data" } });
+                  alert(`Imported: ${r.data.created} (errors: ${r.data.errors})`);
+                  await load();
+                } finally {
+                  input.value = "";
+                }
+              }}
+            />
+          </label>
           Export CSV
         </a>
       </div>

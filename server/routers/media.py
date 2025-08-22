@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from uuid import uuid4
 from datetime import datetime
@@ -51,3 +51,60 @@ async def upload_media(
     )
     db.add(m); db.commit(); db.refresh(m)
     return {"ok": True, "media_uuid": media_uuid, "url": f"/media/{rel}"}
+
+@router.get("/latest")
+def latest_for_card(
+    card_uuid: str = Query(..., description="Card UUID"),
+    kind: Optional[str] = Query(None, description="Optional filter (e.g., 'front')"),
+    db: Session = Depends(get_db),
+):
+    q = (
+        db.query(Media)
+        .filter(Media.card_uuid == card_uuid, Media.deleted_at.is_(None))
+        .order_by(Media.created_at.desc())
+    )
+    if kind:
+        q = q.filter(Media.kind == kind)
+
+    m = q.first()
+    if not m:
+        return {"url": None, "thumb_url": None}
+
+    # If your table has m.thumbnail_path, use it; otherwise fall back to full image
+    base = "/media/"
+    thumb = getattr(m, "thumbnail_path", None)
+    return {
+        "media_uuid": m.media_uuid,
+        "url": f"{base}{m.path}",
+        "thumb_url": f"{base}{(thumb or m.path)}",
+    }
+
+@router.get("", response_model=list[dict])  # keep it simple; or define a Pydantic model later
+def list_media(
+    card_uuid: Optional[str] = None,
+    ownership_uuid: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    q = db.query(Media).filter(Media.deleted_at.is_(None))
+    if card_uuid:
+        q = q.filter(Media.card_uuid == card_uuid)
+    if ownership_uuid:
+        q = q.filter(Media.ownership_uuid == ownership_uuid)
+    rows = q.order_by(Media.created_at.desc()).all()
+
+    base = "/media/"
+    out = []
+    for m in rows:
+        thumb = getattr(m, "thumbnail_path", None)
+        out.append(
+            {
+                "media_uuid": m.media_uuid,
+                "card_uuid": m.card_uuid,
+                "ownership_uuid": m.ownership_uuid,
+                "kind": getattr(m, "kind", None),
+                "url": f"{base}{m.path}",
+                "thumb_url": f"{base}{(thumb or m.path)}",
+                "created_at": m.created_at,
+            }
+        )
+    return out

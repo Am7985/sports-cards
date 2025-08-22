@@ -25,6 +25,9 @@ app.mount("/media", StaticFiles(directory="media"), name="media")
 # 4) include routers AFTER app exists
 from .routers import cards
 from .routers import export as export_router
+from .routers import import_csv
+app.include_router(import_csv.router)
+
 # optional ones if you've created them
 try:
     from .routers import ownership
