@@ -1,0 +1,43 @@
+﻿# ---- OS / editors ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# ---- Python ----
+.venv/
+__pycache__/
+*.py[cod]
+*.pyd
+*.pyo
+*.pdb
+
+# ---- FastAPI project data (runtime artifacts) ----
+data/
+media/
+exports/
+!data/.gitkeep
+!media/.gitkeep
+!exports/.gitkeep
+
+# ---- Alembic caches ----
+server/alembic/**/__pycache__/
+
+# ---- Node / Vite / Tauri ----
+app/ui/node_modules/
+app/ui/dist/
+app/ui/.vite/
+app/ui/src-tauri/target/
+app/ui/src-tauri/.cargo/
+app/ui/src-tauri/gen/
+
+# ---- Env files (secrets) ----
+.env
+app/ui/.env.local
+
+# ---- Logs ----
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pip-log.txt
