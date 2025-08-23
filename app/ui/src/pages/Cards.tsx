@@ -117,7 +117,9 @@ export default function CardsPage() {
       try {
         const r = await api.get<YearsResp>("/v1/cards/browse/years", { params: { sport: selSport } });
         const list = Array.isArray(r.data) ? r.data : (r.data as any).years ?? [];
-        setYears(list.sort((a, b) => b - a)); // newest first
+        // FIX: de-duplicate and sort newest first
+        const uniqYears = Array.from(new Set(list)).sort((a, b) => b - a);
+        setYears(uniqYears);
       } catch { setYears([]); }
       setProducts([]); setSelYear(null); setSelProduct(null);
     })();
@@ -131,21 +133,23 @@ export default function CardsPage() {
         const r = await api.get<ProductsResp>("/v1/cards/browse/products", { params: { sport: selSport, year: selYear } });
         const raw = Array.isArray(r.data) ? r.data : (r.data as any).products ?? [];
         const normalized = raw.map((p: any) => (typeof p === "string" ? p : p?.label ?? "")).filter(Boolean);
-        setProducts(normalized);
+        // FIX: de-duplicate product list (previously could render duplicates)
+        const uniqProducts = Array.from(new Set(normalized));
+        setProducts(uniqProducts);
       } catch { setProducts([]); }
       setSelProduct(null);
     })();
   }, [selSport, selYear]);
 
-  // when product is picked, set q & qText and jump to page 1
+  // when product is picked, apply a stronger search:
+  // product + year + sport -> improves hit rate on /v1/cards?q=...
   useEffect(() => {
-    if (!selProduct) return;
-    setQText(selProduct);
-    setQ(selProduct);
-    setPage(1);
-    // keep search focused
-    requestAnimationFrame(() => searchRef.current?.focus());
-  }, [selProduct]);
+  if (!selProduct) return;
+  setQText(selProduct);   // <-- only the label
+  setQ(selProduct);
+  setPage(1);
+  requestAnimationFrame(() => searchRef.current?.focus());
+}, [selProduct]);
 
   // -------- CRUD ----------
   async function create(e: React.FormEvent) {
