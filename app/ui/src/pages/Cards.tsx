@@ -11,6 +11,7 @@ type Card = {
   player?: string;
   sport?: string;
   updated_at: string;
+  wishlisted?: boolean; // ← wishlist flag
 };
 
 type Side = "front" | "back";
@@ -25,7 +26,7 @@ export default function CardsPage() {
   const [media, setMedia] = useState<MediaMap>({});
   const [preview, setPreview] = useState<{ url: string; alt?: string } | null>(null);
 
-  // ---------- data ----------
+  // -------- data load ----------
   async function load() {
     setLoading(true);
     try {
@@ -56,6 +57,7 @@ export default function CardsPage() {
   useEffect(() => { load(); }, []);
   useEffect(() => { const t = setTimeout(load, 300); return () => clearTimeout(t); }, [q]);
 
+  // -------- CRUD ----------
   async function create(e: React.FormEvent) {
     e.preventDefault();
     await api.post("/v1/cards", {
@@ -79,6 +81,7 @@ export default function CardsPage() {
     fd.append("card_uuid", card_uuid);
     fd.append("kind", side);
     const { data } = await api.post("/v1/media/upload", fd, { headers: { "Content-Type": "multipart/form-data" } });
+
     const toAbs = (u?: string | null) => (u ? `${import.meta.env.VITE_API_BASE_URL}${u}` : "");
     setMedia((m) => {
       const prev = m[card_uuid] || {};
@@ -90,7 +93,12 @@ export default function CardsPage() {
     });
   }
 
-  // ---------- small UI helpers ----------
+  async function toggleWishlist(card_uuid: string, current?: boolean) {
+    await api.post(`/v1/cards/${card_uuid}/wishlist`, { wishlisted: !current });
+    setCards(prev => prev.map(c => c.card_uuid === card_uuid ? { ...c, wishlisted: !current } : c));
+  }
+
+  // -------- small UI bits ----------
   function ToolbarButton(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
     const { className = "", ...rest } = props;
     return (
@@ -119,10 +127,25 @@ export default function CardsPage() {
     );
   }
 
-  // Thumbnail with badges + replace chip (shows on hover only)
+  function Heart({ on, onClick }: { on: boolean; onClick: () => void }) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onClick(); }}
+        className="inline-flex items-center justify-center w-6 h-6"
+        title={on ? "Remove from wishlist" : "Add to wishlist"}
+      >
+        <svg viewBox="0 0 24 24" className={`w-5 h-5 ${on ? "fill-pink-600" : "fill-transparent"} stroke-pink-600`}>
+          <path strokeWidth="1.6" d="M12 21s-5.052-3.142-7.5-5.59C2.5 13.41 2 11.7 2 10a5 5 0 0 1 9-3 5 5 0 0 1 9 3c0 1.7-.5 3.41-2.5 5.41C17.052 17.858 12 21 12 21z"/>
+        </svg>
+      </button>
+    );
+  }
+
+  // Thumbnail with badges + tiny replace chip (shows on hover only)
   function Thumb({
-    url, full, side, card, onReplace,
-  }: { url: string; full: string; side: Side; card: Card; onReplace: () => void }) {
+    url, full, side, card,
+  }: { url: string; full: string; side: Side; card: Card }) {
     const inputRef = useRef<HTMLInputElement>(null);
     return (
       <div className="relative group inline-block">
@@ -156,7 +179,7 @@ export default function CardsPage() {
           onChange={async (e) => {
             const f = e.currentTarget.files?.[0];
             if (!f) return;
-            try { await onReplace ? onReplace() : null; await upload(card.card_uuid, f, side); }
+            try { await upload(card.card_uuid, f, side); }
             finally { e.currentTarget.value = ""; }
           }}
         />
@@ -192,13 +215,13 @@ export default function CardsPage() {
     );
   }
 
-  // ---------- render ----------
+  // -------- render ----------
   return (
-    <div className="mx-auto max-w-6xl px-4 pt-0 pb-8 space-y-4">
+    <div className="mx-auto max-w-6xl px-4 pt-0 pb-6 space-y-4">
       {/* Header / toolbar */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="space-y-1">
-          <h1 className="text-2xl font-semibold">Cards</h1>
+          <h1 className="text-2xl font-semibold">Card Database</h1>
           <p className="text-sm text-neutral-400">{cards.length} card{cards.length === 1 ? "" : "s"}</p>
         </div>
 
@@ -244,7 +267,10 @@ export default function CardsPage() {
       </div>
 
       {/* Quick-add form */}
-      <form onSubmit={create} className="grid grid-cols-2 gap-2 rounded-lg border border-neutral-800 bg-neutral-900 p-2 md:grid-cols-6">
+      <form
+        onSubmit={create}
+        className="grid grid-cols-2 gap-2 rounded-lg border border-neutral-800 bg-neutral-900 p-2 md:grid-cols-6"
+      >
         <input className="rounded border border-neutral-700 bg-neutral-950 p-2 text-sm focus:border-neutral-500 focus:outline-none" placeholder="Year"  value={form.year ?? ""}  onChange={(e)=>setForm(f=>({...f, year:e.target.value as any}))}/>
         <input className="rounded border border-neutral-700 bg-neutral-950 p-2 text-sm focus:border-neutral-500 focus:outline-none" placeholder="Brand" value={form.brand ?? ""} onChange={(e)=>setForm(f=>({...f, brand:e.target.value}))}/>
         <input className="rounded border border-neutral-700 bg-neutral-950 p-2 text-sm focus:border-neutral-500 focus:outline-none" placeholder="Set"   value={form.set_name ?? ""} onChange={(e)=>setForm(f=>({...f, set_name:e.target.value}))}/>
@@ -261,7 +287,15 @@ export default function CardsPage() {
         <table className="w-full text-sm">
           <thead className="sticky top-0 bg-neutral-900/90 backdrop-blur supports-[backdrop-filter]:bg-neutral-900/70">
             <tr className="[&>th]:py-2 [&>th]:px-3 [&>th]:text-left [&>th]:font-medium [&>th]:text-neutral-300">
-              <th>Year</th><th>Brand</th><th>Set</th><th>No.</th><th>Player</th><th>Sport</th><th>Media (Front / Back)</th><th></th>
+              <th className="w-8"></th> {/* ❤️ */}
+              <th>Year</th>
+              <th>Brand</th>
+              <th>Set</th>
+              <th>No.</th>
+              <th>Player</th>
+              <th>Sport</th>
+              <th>Media (Front / Back)</th>
+              <th></th>
             </tr>
           </thead>
           <tbody className="[&>tr]:border-t [&>tr]:border-neutral-800">
@@ -269,6 +303,9 @@ export default function CardsPage() {
               const pair = media[c.card_uuid] || {};
               return (
                 <tr key={c.card_uuid} className="hover:bg-neutral-900/60">
+                  <td className="px-3 py-2">
+                    <Heart on={!!c.wishlisted} onClick={() => toggleWishlist(c.card_uuid, c.wishlisted)} />
+                  </td>
                   <td className="px-3 py-2">{c.year ?? ""}</td>
                   <td className="px-3 py-2">{c.brand ?? ""}</td>
                   <td className="px-3 py-2">{c.set_name ?? ""}</td>
@@ -279,27 +316,30 @@ export default function CardsPage() {
                     <div className="flex items-center gap-3">
                       {/* FRONT */}
                       {pair.front?.thumb ? (
-                        <Thumb url={pair.front.thumb} full={pair.front.full} side="front" card={c} onReplace={() => {}} />
+                        <Thumb url={pair.front.thumb} full={pair.front.full} side="front" card={c} />
                       ) : (
                         <EmptySlot cardId={c.card_uuid} side="front" />
                       )}
 
                       {/* BACK */}
                       {pair.back?.thumb ? (
-                        <Thumb url={pair.back.thumb} full={pair.back.full} side="back" card={c} onReplace={() => {}} />
+                        <Thumb url={pair.back.thumb} full={pair.back.full} side="back" card={c} />
                       ) : (
                         <EmptySlot cardId={c.card_uuid} side="back" />
                       )}
                     </div>
                   </td>
                   <td className="px-3 py-2 text-right">
-                    <button onClick={() => remove(c.card_uuid)} className="text-red-400 hover:text-red-300">Delete</button>
+                    <button onClick={() => remove(c.card_uuid)} className="text-red-400 hover:text-red-300">
+                      Delete
+                    </button>
                   </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
+
         {loading && <div className="border-t border-neutral-800 p-3 text-sm text-neutral-400">Loading…</div>}
         {!loading && cards.length === 0 && (
           <div className="border-t border-neutral-800 p-6 text-center text-sm text-neutral-400">No cards yet.</div>

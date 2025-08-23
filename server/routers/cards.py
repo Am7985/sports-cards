@@ -1,9 +1,10 @@
 # server/routers/cards.py
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from uuid import uuid4
 from datetime import datetime
+
 
 from ..deps import get_db
 from ..models import Card
@@ -27,6 +28,7 @@ def list_cards(
     page_size: int = 50,
     sort: str = "updated_at",   # allow: updated_at, created_at, year, player, brand, set_name, card_no
     order: str = "desc",        # asc|desc
+    wishlisted: Optional[bool] = Query(None),
 ):
     page = max(1, page); page_size = min(max(1, page_size), 200)
 
@@ -37,6 +39,8 @@ def list_cards(
             (Card.player.ilike(like)) | (Card.brand.ilike(like)) |
             (Card.set_name.ilike(like)) | (Card.card_no.ilike(like))
         )
+    if wishlisted is not None:
+        query = query.filter(Card.wishlisted == wishlisted)
 
     col = getattr(Card, sort, Card.updated_at)
     query = query.order_by(col.desc() if order.lower() == "desc" else col.asc())
@@ -85,3 +89,19 @@ def delete_card(card_uuid: str, db: Session = Depends(get_db)):
     card.deleted_at = now()
     db.add(card); db.commit()
     return {"ok": True}
+
+@router.post("/{card_uuid}/wishlist")
+def set_wishlist(
+    card_uuid: str,
+    wishlisted: bool = Body(..., embed=True),
+    db: Session = Depends(get_db),
+):
+    card = db.query(Card).filter(Card.card_uuid == card_uuid, Card.deleted_at.is_(None)).first()
+    if not card:
+        raise HTTPException(404, "card not found")
+    card.wishlisted = bool(wishlisted)
+    card.updated_at = now()
+    db.commit()
+    db.refresh(card)
+    return {"ok": True, "card_uuid": card.card_uuid, "wishlisted": card.wishlisted}
+
