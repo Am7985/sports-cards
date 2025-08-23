@@ -1,5 +1,5 @@
 // app/ui/src/pages/Cards.tsx
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import api from "../lib/api";
 
 type Card = {
@@ -11,38 +11,77 @@ type Card = {
   player?: string;
   sport?: string;
   updated_at: string;
-  wishlisted?: boolean; // ← wishlist flag
+  wishlisted?: boolean;
 };
 
 type Side = "front" | "back";
 type Pair = { front?: { thumb: string; full: string }; back?: { thumb: string; full: string } };
 type MediaMap = Record<string, Pair>;
 
+// Browse response fallbacks
+type SportsResp = { sports: string[] } | string[];
+type YearsResp = { years: number[] } | number[];
+type ProductsResp =
+  | { products: (string | { label: string })[] }
+  | (string | { label: string })[];
+
 export default function CardsPage() {
+  // -------- query & paging ----------
   const [cards, setCards] = useState<Card[]>([]);
-  const [form, setForm] = useState<Partial<Card>>({});
+  const [total, setTotal] = useState<number | null>(null);
+  const [page, setPage] = useState(1);
+  const pageSize = 50;
+
+  // committed query vs. input box text
   const [q, setQ] = useState("");
+  const [qText, setQText] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  // -------- form & ui ----------
+  const [form, setForm] = useState<Partial<Card>>({});
   const [loading, setLoading] = useState(false);
   const [media, setMedia] = useState<MediaMap>({});
   const [preview, setPreview] = useState<{ url: string; alt?: string } | null>(null);
+
+  // -------- browse state ----------
+  const [sports, setSports] = useState<string[]>([]);
+  const [years, setYears] = useState<number[]>([]);
+  const [products, setProducts] = useState<string[]>([]);
+  const [selSport, setSelSport] = useState<string | null>(null);
+  const [selYear, setSelYear] = useState<number | null>(null);
+  const [selProduct, setSelProduct] = useState<string | null>(null);
 
   // -------- data load ----------
   async function load() {
     setLoading(true);
     try {
-      const { data } = await api.get<Card[]>("/v1/cards", { params: q ? { q } : {} });
-      setCards(data);
+      const params: any = { page, page_size: pageSize };
+      if (q) params.q = q;
 
+      const r = await api.get("/v1/cards", { params });
+
+      // Accept both array and {items,total}
+      const items: Card[] = Array.isArray(r.data) ? r.data : r.data.items ?? [];
+      const totalCount: number | null = Array.isArray(r.data)
+        ? null
+        : typeof r.data.total === "number"
+        ? r.data.total
+        : null;
+
+      setCards(items);
+      setTotal(totalCount);
+
+      // Load media pairs per row
       const pairs = await Promise.all(
-        data.map(async (c) => {
+        items.map(async (c) => {
           try {
-            const r = await api.get<{ front: any; back: any }>("/v1/media/pair", {
+            const resp = await api.get<{ front: any; back: any }>("/v1/media/pair", {
               params: { card_uuid: c.card_uuid },
             });
             const toAbs = (u?: string | null) => (u ? `${import.meta.env.VITE_API_BASE_URL}${u}` : "");
             const pair: Pair = {};
-            if (r.data.front) pair.front = { thumb: toAbs(r.data.front.thumb_url), full: toAbs(r.data.front.url) };
-            if (r.data.back)  pair.back  = { thumb: toAbs(r.data.back.thumb_url),  full: toAbs(r.data.back.url)  };
+            if (resp.data.front) pair.front = { thumb: toAbs(resp.data.front.thumb_url), full: toAbs(resp.data.front.url) };
+            if (resp.data.back) pair.back = { thumb: toAbs(resp.data.back.thumb_url), full: toAbs(resp.data.back.url) };
             return [c.card_uuid, pair] as const;
           } catch {
             return [c.card_uuid, {} as Pair] as const;
@@ -54,8 +93,59 @@ export default function CardsPage() {
       setLoading(false);
     }
   }
+
+  // initial load
   useEffect(() => { load(); }, []);
-  useEffect(() => { const t = setTimeout(load, 300); return () => clearTimeout(t); }, [q]);
+  // reload when committed query or page changes
+  useEffect(() => { load(); }, [q, page]);
+
+  // -------- browse initial load ----------
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await api.get<SportsResp>("/v1/cards/browse/sports");
+        const list = Array.isArray(r.data) ? r.data : (r.data as any).sports ?? [];
+        setSports(list);
+      } catch { /* ignore */ }
+    })();
+  }, []);
+
+  // if sport changes, fetch years
+  useEffect(() => {
+    if (!selSport) { setYears([]); setProducts([]); setSelYear(null); setSelProduct(null); return; }
+    (async () => {
+      try {
+        const r = await api.get<YearsResp>("/v1/cards/browse/years", { params: { sport: selSport } });
+        const list = Array.isArray(r.data) ? r.data : (r.data as any).years ?? [];
+        setYears(list.sort((a, b) => b - a)); // newest first
+      } catch { setYears([]); }
+      setProducts([]); setSelYear(null); setSelProduct(null);
+    })();
+  }, [selSport]);
+
+  // if year changes, fetch products
+  useEffect(() => {
+    if (!selSport || !selYear) { setProducts([]); setSelProduct(null); return; }
+    (async () => {
+      try {
+        const r = await api.get<ProductsResp>("/v1/cards/browse/products", { params: { sport: selSport, year: selYear } });
+        const raw = Array.isArray(r.data) ? r.data : (r.data as any).products ?? [];
+        const normalized = raw.map((p: any) => (typeof p === "string" ? p : p?.label ?? "")).filter(Boolean);
+        setProducts(normalized);
+      } catch { setProducts([]); }
+      setSelProduct(null);
+    })();
+  }, [selSport, selYear]);
+
+  // when product is picked, set q & qText and jump to page 1
+  useEffect(() => {
+    if (!selProduct) return;
+    setQText(selProduct);
+    setQ(selProduct);
+    setPage(1);
+    // keep search focused
+    requestAnimationFrame(() => searchRef.current?.focus());
+  }, [selProduct]);
 
   // -------- CRUD ----------
   async function create(e: React.FormEvent) {
@@ -112,17 +202,51 @@ export default function CardsPage() {
     );
   }
 
+  // fixed focus SearchInput
   function SearchInput() {
+    const submit = () => {
+      setQ(qText.trim());
+      setPage(1);
+      requestAnimationFrame(() => searchRef.current?.focus());
+    };
+    const clear = () => {
+      setQText("");
+      setQ("");
+      setPage(1);
+      // also clear selected product breadcrumb, but keep sport/year selection
+      setSelProduct(null);
+      requestAnimationFrame(() => searchRef.current?.focus());
+    };
+
     return (
-      <div className="relative w-full md:w-80">
-        <span className="pointer-events-none absolute left-2 top-2.5 text-neutral-400">🔎</span>
+      <div className="relative w-full md:w-[28rem]">
+        <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-neutral-400">🔎</span>
         <input
-          className="w-full rounded-md border border-neutral-700 bg-neutral-900 py-2 pl-7 pr-2 text-sm
+          ref={searchRef}
+          value={qText}
+          onChange={(e) => {
+            setQText(e.target.value);
+            requestAnimationFrame(() => searchRef.current?.focus());
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") { e.preventDefault(); submit(); }
+          }}
+          className="w-full rounded-md border border-neutral-700 bg-neutral-900 py-2 pl-7 pr-7 text-sm
                      placeholder-neutral-500 focus:border-neutral-500 focus:outline-none"
           placeholder="Search player / brand / set…"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
+          type="text"
         />
+        {qText && (
+          <button
+            type="button"
+            onClick={clear}
+            aria-label="Clear"
+            className="absolute right-2 top-1/2 -translate-y-1/2 h-5 w-5 flex items-center justify-center
+                       text-neutral-300 hover:text-white"
+          >
+            ×
+          </button>
+        )}
       </div>
     );
   }
@@ -142,10 +266,7 @@ export default function CardsPage() {
     );
   }
 
-  // Thumbnail with badges + tiny replace chip (shows on hover only)
-  function Thumb({
-    url, full, side, card,
-  }: { url: string; full: string; side: Side; card: Card }) {
+  function Thumb({ url, full, side, card }: { url: string; full: string; side: Side; card: Card }) {
     const inputRef = useRef<HTMLInputElement>(null);
     return (
       <div className="relative group inline-block">
@@ -156,11 +277,9 @@ export default function CardsPage() {
           onClick={() => setPreview({ url: full || url, alt: `${card.year ?? ""} ${card.player ?? ""} (${side})` })}
           title={`${side[0].toUpperCase() + side.slice(1)} – click to view`}
         />
-        {/* F/B badge */}
         <span className="absolute left-1 top-1 rounded bg-black/70 px-1 text-[10px] leading-none text-neutral-200">
           {side === "front" ? "F" : "B"}
         </span>
-        {/* replace chip (only visible on hover) */}
         <span
           role="button"
           aria-label={`Replace ${side}`}
@@ -187,7 +306,6 @@ export default function CardsPage() {
     );
   }
 
-  // Empty dashed slot with big F/B + click to upload
   function EmptySlot({ cardId, side }: { cardId: string; side: Side }) {
     const inputId = `${cardId}-${side}-empty`;
     return (
@@ -215,14 +333,20 @@ export default function CardsPage() {
     );
   }
 
-  // -------- render ----------
+  const totalPages = useMemo(() => {
+    if (total == null) return null; // unknown
+    return Math.max(1, Math.ceil(total / pageSize));
+  }, [total]);
+
   return (
     <div className="mx-auto max-w-6xl px-4 pt-0 pb-6 space-y-4">
       {/* Header / toolbar */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold">Card Database</h1>
-          <p className="text-sm text-neutral-400">{cards.length} card{cards.length === 1 ? "" : "s"}</p>
+          <p className="text-sm text-neutral-400">
+            {total != null ? `${total} total • ` : ""}{cards.length} shown
+          </p>
         </div>
 
         <div className="flex w-full items-center gap-2 sm:w-auto">
@@ -246,10 +370,9 @@ export default function CardsPage() {
                     headers: { "Content-Type": "multipart/form-data" },
                   });
                   alert(`Imported: ${r.data.created} (errors: ${r.data.errors})`);
+                  setPage(1);
                   await load();
-                } finally {
-                  input.value = "";
-                }
+                } finally { input.value = ""; }
               }}
             />
           </label>
@@ -266,18 +389,85 @@ export default function CardsPage() {
         </div>
       </div>
 
+      {/* Browse bar */}
+      <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-3 space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm text-neutral-400 mr-1">Sport:</span>
+          {sports.map((s) => (
+            <button
+              key={s}
+              onClick={() => setSelSport(s === selSport ? null : s)}
+              className={`rounded-md border px-3 py-1 text-sm ${
+                s === selSport ? "border-blue-500 bg-blue-600/20" : "border-neutral-700 bg-neutral-800 hover:bg-neutral-750"
+              }`}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+
+        {selSport && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm text-neutral-400 mr-1">Year:</span>
+            {years.map((y) => (
+              <button
+                key={y}
+                onClick={() => setSelYear(y === selYear ? null : y)}
+                className={`rounded-md border px-3 py-1 text-sm ${
+                  y === selYear ? "border-blue-500 bg-blue-600/20" : "border-neutral-700 bg-neutral-800 hover:bg-neutral-750"
+                }`}
+              >
+                {y}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {selSport && selYear && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm text-neutral-400 mr-1">Product:</span>
+            {products.map((p) => (
+              <button
+                key={p}
+                onClick={() => setSelProduct(p)}
+                className={`rounded-md border px-3 py-1 text-sm ${
+                  p === selProduct ? "border-blue-500 bg-blue-600/20" : "border-neutral-700 bg-neutral-800 hover:bg-neutral-750"
+                }`}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {(selSport || selYear || selProduct) && (
+          <div className="text-xs text-neutral-400">
+            Selected:&nbsp;
+            <span className="text-neutral-200">{selSport ?? "—"}</span>
+            {selYear ? <> &gt; <span className="text-neutral-200">{selYear}</span></> : null}
+            {selProduct ? <> &gt; <span className="text-neutral-200">{selProduct}</span></> : null}
+          </div>
+        )}
+      </div>
+
       {/* Quick-add form */}
       <form
         onSubmit={create}
         className="grid grid-cols-2 gap-2 rounded-lg border border-neutral-800 bg-neutral-900 p-2 md:grid-cols-6"
       >
-        <input className="rounded border border-neutral-700 bg-neutral-950 p-2 text-sm focus:border-neutral-500 focus:outline-none" placeholder="Year"  value={form.year ?? ""}  onChange={(e)=>setForm(f=>({...f, year:e.target.value as any}))}/>
-        <input className="rounded border border-neutral-700 bg-neutral-950 p-2 text-sm focus:border-neutral-500 focus:outline-none" placeholder="Brand" value={form.brand ?? ""} onChange={(e)=>setForm(f=>({...f, brand:e.target.value}))}/>
-        <input className="rounded border border-neutral-700 bg-neutral-950 p-2 text-sm focus:border-neutral-500 focus:outline-none" placeholder="Set"   value={form.set_name ?? ""} onChange={(e)=>setForm(f=>({...f, set_name:e.target.value}))}/>
-        <input className="rounded border border-neutral-700 bg-neutral-950 p-2 text-sm focus:border-neutral-500 focus:outline-none" placeholder="No."   value={form.card_no ?? ""} onChange={(e)=>setForm(f=>({...f, card_no:e.target.value}))}/>
-        <input className="rounded border border-neutral-700 bg-neutral-950 p-2 text-sm focus:border-neutral-500 focus:outline-none" placeholder="Player" value={form.player ?? ""} onChange={(e)=>setForm(f=>({...f, player:e.target.value}))}/>
+        <input className="rounded border border-neutral-700 bg-neutral-950 p-2 text-sm focus:border-neutral-500 focus:outline-none" placeholder="Year"
+               value={form.year ?? ""} onChange={(e)=>setForm(f=>({...f, year:e.target.value as any}))}/>
+        <input className="rounded border border-neutral-700 bg-neutral-950 p-2 text-sm focus:border-neutral-500 focus:outline-none" placeholder="Brand"
+               value={form.brand ?? ""} onChange={(e)=>setForm(f=>({...f, brand:e.target.value}))}/>
+        <input className="rounded border border-neutral-700 bg-neutral-950 p-2 text-sm focus:border-neutral-500 focus:outline-none" placeholder="Set"
+               value={form.set_name ?? ""} onChange={(e)=>setForm(f=>({...f, set_name:e.target.value}))}/>
+        <input className="rounded border border-neutral-700 bg-neutral-950 p-2 text-sm focus:border-neutral-500 focus:outline-none" placeholder="No."
+               value={form.card_no ?? ""} onChange={(e)=>setForm(f=>({...f, card_no:e.target.value}))}/>
+        <input className="rounded border border-neutral-700 bg-neutral-950 p-2 text-sm focus:border-neutral-500 focus:outline-none" placeholder="Player"
+               value={form.player ?? ""} onChange={(e)=>setForm(f=>({...f, player:e.target.value}))}/>
         <div className="flex items-center gap-2">
-          <input className="w-full rounded border border-neutral-700 bg-neutral-950 p-2 text-sm focus:border-neutral-500 focus:outline-none" placeholder="Sport" value={form.sport ?? ""} onChange={(e)=>setForm(f=>({...f, sport:e.target.value}))}/>
+          <input className="w-full rounded border border-neutral-700 bg-neutral-950 p-2 text-sm focus:border-neutral-500 focus:outline-none" placeholder="Sport"
+                 value={form.sport ?? ""} onChange={(e)=>setForm(f=>({...f, sport:e.target.value}))}/>
           <ToolbarButton type="submit" className="bg-blue-600 border-blue-600 hover:bg-blue-500">Add</ToolbarButton>
         </div>
       </form>
@@ -287,7 +477,7 @@ export default function CardsPage() {
         <table className="w-full text-sm">
           <thead className="sticky top-0 bg-neutral-900/90 backdrop-blur supports-[backdrop-filter]:bg-neutral-900/70">
             <tr className="[&>th]:py-2 [&>th]:px-3 [&>th]:text-left [&>th]:font-medium [&>th]:text-neutral-300">
-              <th className="w-8"></th> {/* ❤️ */}
+              <th className="w-8"></th>
               <th>Year</th>
               <th>Brand</th>
               <th>Set</th>
@@ -314,14 +504,11 @@ export default function CardsPage() {
                   <td className="px-3 py-2">{c.sport ?? ""}</td>
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-3">
-                      {/* FRONT */}
                       {pair.front?.thumb ? (
                         <Thumb url={pair.front.thumb} full={pair.front.full} side="front" card={c} />
                       ) : (
                         <EmptySlot cardId={c.card_uuid} side="front" />
                       )}
-
-                      {/* BACK */}
                       {pair.back?.thumb ? (
                         <Thumb url={pair.back.thumb} full={pair.back.full} side="back" card={c} />
                       ) : (
@@ -339,6 +526,29 @@ export default function CardsPage() {
             })}
           </tbody>
         </table>
+
+        {/* paging */}
+        <div className="flex items-center justify-between border-t border-neutral-800 p-3 text-sm">
+          <div className="text-neutral-400">
+            Page {page}{totalPages ? ` of ${totalPages}` : ""}{total != null ? ` • ${total} total` : ""}
+          </div>
+          <div className="flex gap-2">
+            <button
+              className="rounded-md border border-neutral-700 bg-neutral-800 px-3 py-1 disabled:opacity-50"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1}
+            >
+              Prev
+            </button>
+            <button
+              className="rounded-md border border-neutral-700 bg-neutral-800 px-3 py-1 disabled:opacity-50"
+              onClick={() => setPage((p) => (totalPages ? Math.min(totalPages, p + 1) : p + 1))}
+              disabled={totalPages ? page >= totalPages : false}
+            >
+              Next
+            </button>
+          </div>
+        </div>
 
         {loading && <div className="border-t border-neutral-800 p-3 text-sm text-neutral-400">Loading…</div>}
         {!loading && cards.length === 0 && (
