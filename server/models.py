@@ -1,5 +1,5 @@
 # server/models.py
-from sqlalchemy import Column, String, Integer, Text, DateTime, Numeric, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, String, Integer, Text, DateTime, Numeric, ForeignKey, UniqueConstraint, Boolean, text
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from datetime import datetime
 from .db import Base
@@ -9,13 +9,17 @@ def now_utc() -> str:
 
 class Card(Base):
     __tablename__ = "cards"
+    wishlisted = Column(Boolean, nullable=False, server_default=text("0"))
     card_uuid: Mapped[str] = mapped_column(String, primary_key=True)
     tenant_id: Mapped[str] = mapped_column(String, default="local", index=True)
     schema_version: Mapped[str] = mapped_column(String, default="v1")
     created_at: Mapped[str] = mapped_column(String, default=now_utc)
     updated_at: Mapped[str] = mapped_column(String, default=now_utc)
     deleted_at: Mapped[str | None] = mapped_column(String, nullable=True)
+    external_source: Mapped[str | None] = mapped_column(String, nullable=True)
+    external_id:     Mapped[str | None] = mapped_column(String, nullable=True)
 
+ 
     year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     brand: Mapped[str | None] = mapped_column(String, nullable=True)
     set_name: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -28,6 +32,10 @@ class Card(Base):
     variant: Mapped[str | None] = mapped_column(String, nullable=True)
     print_run: Mapped[str | None] = mapped_column(String, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attributes_json: Mapped[str | None] = mapped_column(Text,   nullable=True)
+    variations_json: Mapped[str | None] = mapped_column(Text,   nullable=True)
+    parallels_json:  Mapped[str | None] = mapped_column(Text,   nullable=True)
+    is_rc: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="0")
 
     canonical_key: Mapped[str | None] = mapped_column(String, index=True, nullable=True)
     created_by_user_id: Mapped[str | None] = mapped_column(String, nullable=True)
